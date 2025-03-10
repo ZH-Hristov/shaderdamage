@@ -83,6 +83,7 @@ sd_effects.lowhpveins = {
 
         if ctasks.lowhpveins then return end
         if LocalPlayer():Health() / LocalPlayer():GetMaxHealth() > ops.hpthreshold:GetFloat() then return end
+        if not LocalPlayer():Alive() then return end
         AddCTask("lowhpveins", function(dat, ops)
             local mat = Material("shaderdamage/veinoverlay")
             local w, h = ScrW(), ScrH()
@@ -90,6 +91,9 @@ sd_effects.lowhpveins = {
 
             local txh = h * 5
             local txw = txh * aspect
+
+            local txsw = txw
+            local txfw = h * aspect
 
             local x = -txw * 0.5
             local y = -txh * 0.5
@@ -109,6 +113,10 @@ sd_effects.lowhpveins = {
             snd:Play()
 
             local fftbl = {}
+            local fftaberr = 0
+            local mtx = Matrix()
+            mtx:SetTranslation(Vector(w * 0.5, h * 0.5, 0))
+
             hook.Add("RenderScreenspaceEffects", "sddmg_lowhpveins", function()
                 surface.SetDrawColor(color_white)
                 mat:SetFloat("$c0_x", 0.5 + math.Rand(-0.03, 0.03) )
@@ -117,21 +125,22 @@ sd_effects.lowhpveins = {
                 if snd and not isnumber(snd) and snd:GetState() == GMOD_CHANNEL_PLAYING then
                     snd:FFT(fftbl, FFT_256)
                     mat:SetFloat("$c0_z", Lerp(FrameTime() * 10, mat:GetFloat("$c0_z"), fftbl[5] * -5) )
+                    fftaberr = Lerp(FrameTime() * 10, fftaberr, fftbl[5] * 10)
                 end
 
                 surface.SetMaterial(mat)
-                surface.DrawTexturedRect(x, y, txw, txh)
+                cam.PushModelMatrix(mtx)
+                surface.DrawTexturedRect(-txw * 0.5, -txh * 0.5, txw, txh)
+                cam.PopModelMatrix()
+                render.DrawMercChromaticAberration( fftaberr, true )
             end)
 
             WhileProg(function(p)
-                txh = Lerp(math.ease.OutSine(p), h * 5, h)
-                txw = txh * aspect
+                txh = Lerp(math.ease.OutCubic(p), h * 5, h)
+                txw = Lerp(math.ease.OutCubic(p), txsw, txfw)
+            end, 0.5)
 
-                x = Lerp(math.ease.OutSine(p), -txw * 0.5, 0)
-                y = Lerp(math.ease.OutSine(p), -txh * 0.5, 0)
-            end, 1)
-
-            while LocalPlayer():Health() / LocalPlayer():GetMaxHealth() <= ops.hpthreshold:GetFloat() do
+            while LocalPlayer():Alive() and LocalPlayer():Health() / LocalPlayer():GetMaxHealth() <= ops.hpthreshold:GetFloat() do
                 coroutine.yield()
             end
 
@@ -141,10 +150,7 @@ sd_effects.lowhpveins = {
             WhileProg(function(p)
                 txh = Lerp(math.ease.InSine(p), h, h * 5)
                 txw = txh * aspect
-
-                x = Lerp(math.ease.InSine(p), 0, -txw * 0.5)
-                y = Lerp(math.ease.InSine(p), 0, -txh * 0.5)
-            end, 0.4)
+            end, 0.2)
 
             hook.Remove("RenderScreenspaceEffects", "sddmg_lowhpveins")
 
@@ -156,6 +162,37 @@ sd_effects.lowhpveins = {
 
     options = {
         hpthreshold = {0.3, 0.01, 1}
+    }
+}
+
+sd_effects.chromatic_aberration = {
+    func = function(dat, ops)
+        dat.life = 1
+
+        if ctasks.chromaberr then return end
+        AddCTask("chromaberr", function(dat, ops)
+            hook.Add("RenderScreenspaceEffects", "sddmg_chromatic_aberration", function()
+                render.DrawMercChromaticAberration( Lerp(math.ease.InSine(dat.life), 0, ops.maxstrength:GetFloat()), true )
+            end)
+
+            while dat.life > 0 do
+                dat.life = math.max(dat.life - FrameTime() / ops.lifetime:GetFloat(), 0)
+                coroutine.yield()
+            end
+
+            hook.Remove("RenderScreenspaceEffects", "sddmg_chromatic_aberration")
+
+            return true
+        end, dat, ops)
+    end,
+
+    data = {
+        life = 0
+    },
+
+    options = {
+        lifetime = {1, 0.1, 5},
+        maxstrength = {5, 0.001, 10}
     }
 }
 
