@@ -33,28 +33,32 @@ local function WhileProg(func, time)
     end
 end
 
-gameevent.Listen( "player_hurt" )
+net.Receive("ShaderDamage", function()
+    local dmg = net.ReadUInt(16)
 
-hook.Add( "player_hurt", "shader_damage_player_hurt", function( data ) 
-    local ply = Player(data.userid)
-    if ply ~= LocalPlayer() then return end
     for id, eff in pairs(sd_effects) do
         local cvar = GetConVar("shaderdamage_ef_"..id)
         if not cvar then continue end
         if not cvar:GetBool() then continue end
 
-        eff.func(eff.data or {}, eff.options or {})
+        eff.func(eff.data or {}, eff.compoptions or {}, dmg)
     end
-end )
+end)
 
 sd_effects.radblur = {
-    func = function(dat, ops)
+    func = function(dat, ops, dmg)
         dat.life = 1
 
+        if ops.scale_strength_with_damage:GetBool() then
+            dat.strength = math.max(dat.strength, Lerp( dmg / ops.scalar_damage_max:GetInt(), 0, ops.max_strength:GetFloat() ) )
+        else
+            dat.strength = ops.max_strength:GetFloat()
+        end
+
         if ctasks.radblur then return end
-        AddCTask("radblur", function(dat, ops)
+        AddCTask("radblur", function(dat, ops, dmg)
             hook.Add("RenderScreenspaceEffects", "sddmg_radblur", function()
-                render.DrawMercRadialBlur( 0.5, 0.5, Lerp(math.ease.InSine(dat.life), 0, ops.maxstrength:GetFloat()) )
+                render.DrawMercRadialBlur( 0.5, 0.5, Lerp( math.ease.InSine(dat.life), 0, dat.strength ) )
             end)
 
             while dat.life > 0 do
@@ -63,26 +67,32 @@ sd_effects.radblur = {
             end
 
             hook.Remove("RenderScreenspaceEffects", "sddmg_radblur")
+            dat.strength = 0
 
             return true
-        end, dat, ops)
+        end, dat, ops, dmg)
     end,
 
     data = {
+        strength = 0,
         life = 0
     },
 
     options = {
         lifetime = {1, 0.1, 5},
-        maxstrength = {5, 0.001, 10}
-    }
+        max_strength = {0.5, 0.001, 1},
+        scale_strength_with_damage = {0, 0, 1},
+        scalar_damage_max = {100, 0, 16384}
+    },
+
+    nicename = "Radial Blur"
 }
 
 sd_effects.lowhpveins = {
     func = function(dat, ops)
 
         if ctasks.lowhpveins then return end
-        if LocalPlayer():Health() / LocalPlayer():GetMaxHealth() > ops.hpthreshold:GetFloat() then return end
+        if LocalPlayer():Health() / LocalPlayer():GetMaxHealth() > ops.health_threshold:GetFloat() then return end
         if not LocalPlayer():Alive() then return end
         AddCTask("lowhpveins", function(dat, ops)
             local mat = Material("shaderdamage/veinoverlay")
@@ -140,7 +150,7 @@ sd_effects.lowhpveins = {
                 txw = Lerp(math.ease.OutCubic(p), txsw, txfw)
             end, 0.5)
 
-            while LocalPlayer():Alive() and LocalPlayer():Health() / LocalPlayer():GetMaxHealth() <= ops.hpthreshold:GetFloat() do
+            while LocalPlayer():Alive() and LocalPlayer():Health() / LocalPlayer():GetMaxHealth() <= ops.health_threshold:GetFloat() do
                 coroutine.yield()
             end
 
@@ -161,18 +171,26 @@ sd_effects.lowhpveins = {
     data = {},
 
     options = {
-        hpthreshold = {0.3, 0.01, 1}
-    }
+        health_threshold = {0.3, 0.01, 1}
+    },
+
+    nicename = "Low HP Veins Overlay"
 }
 
 sd_effects.chromatic_aberration = {
-    func = function(dat, ops)
+    func = function(dat, ops, dmg)
         dat.life = 1
 
+        if ops.scale_strength_with_damage:GetBool() then
+            dat.strength = math.max(dat.strength, Lerp( dmg / ops.scalar_damage_max:GetInt(), 0, ops.max_strength:GetFloat() ) )
+        else
+            dat.strength = ops.max_strength:GetFloat()
+        end
+
         if ctasks.chromaberr then return end
-        AddCTask("chromaberr", function(dat, ops)
+        AddCTask("chromaberr", function(dat, ops, dmg)
             hook.Add("RenderScreenspaceEffects", "sddmg_chromatic_aberration", function()
-                render.DrawMercChromaticAberration( Lerp(math.ease.InSine(dat.life), 0, ops.maxstrength:GetFloat()), true )
+                render.DrawMercChromaticAberration( Lerp( math.ease.InSine(dat.life), 0, dat.strength ), true )
             end)
 
             while dat.life > 0 do
@@ -181,27 +199,109 @@ sd_effects.chromatic_aberration = {
             end
 
             hook.Remove("RenderScreenspaceEffects", "sddmg_chromatic_aberration")
+            dat.strength = 0
 
             return true
-        end, dat, ops)
+        end, dat, ops, dmg)
     end,
 
     data = {
-        life = 0
+        life = 0,
+        strength = 0
     },
 
     options = {
         lifetime = {1, 0.1, 5},
-        maxstrength = {5, 0.001, 10}
-    }
+        max_strength = {5, 0.001, 10},
+        scale_strength_with_damage = {0, 0, 1},
+        scalar_damage_max = {100, 0, 16384}
+    },
+
+    nicename = "Chromatic Aberration Radial"
 }
 
+sd_effects.highdmg_blur = {
+    func = function(dat, ops, dmg)
+        if dmg < ops.minimum_damage_threshold:GetInt() then return end
+
+        dat.life = 1
+        dat.strength = math.max(dat.strength, Lerp( dmg / ops.scalar_damage_max:GetInt(), 0, ops.max_strength:GetFloat() ) )
+
+        if ctasks.highdmblur then return end
+        AddCTask("highdmgblur", function(dat, ops, dmg)
+            hook.Add("RenderScreenspaceEffects", "sddmg_highdmgblur", function()
+                render.DrawMercBlur( Lerp( math.ease.InSine(dat.life), 0, dat.strength ) )
+            end)
+
+            while dat.life > 0 do
+                dat.life = math.max(dat.life - FrameTime() / ops.lifetime:GetFloat(), 0)
+                coroutine.yield()
+            end
+
+            hook.Remove("RenderScreenspaceEffects", "sddmg_highdmgblur")
+            dat.strength = 0
+
+            return true
+        end, dat, ops, dmg)
+    end,
+
+    data = {
+        life = 0,
+        strength = 0
+    },
+
+    options = {
+        lifetime = {1, 0.1, 10},
+        max_strength = {1, 0.001, 3},
+        minimum_damage_threshold = {50, 0, 1000},
+        scalar_damage_max = {100, 0, 16384}
+    },
+
+    nicename = "High Damage Blur"
+}
+
+hook.Add( "AddToolMenuCategories", "ShaderDamage_SpawnCategory", function()
+	spawnmenu.AddToolCategory( "Options", "ShaderDamage", "Shader Damage Options" )
+end )
+
+hook.Add( "PopulateToolMenu", "ShaderDamage_Settings", function()
+
+    for id, v in pairs(sd_effects) do
+        spawnmenu.AddToolMenuOption( "Options", "ShaderDamage", "EffectOptions"..id, v.nicename or id, "", "", function( panel )
+            panel:ClearControls()
+            panel:CheckBox("Enable", "shaderdamage_ef_"..id)
+
+            if v.options then
+                for opid, op in pairs(v.options) do
+                    local explstr = string.Split(opid, "_")
+
+                    for k, word in pairs(explstr) do
+                        explstr[k] = string.gsub(word, "^%l", string.upper)
+                    end
+
+                    if op[2] == 0 and op[3] == 1 then
+                        panel:CheckBox(table.concat(explstr, " "), "shaderdamage_ef_"..id.."_"..opid)
+                    else
+                        panel:NumSlider(table.concat(explstr, " "), "shaderdamage_ef_"..id.."_"..opid, op[2], op[3], 3)
+                    end
+                end
+            end
+
+        end )
+    end
+
+end )
+
 for id, v in pairs(sd_effects) do
-    CreateClientConVar("shaderdamage_ef_"..id, "0", true, false, "Shader Damage Effect Enable - "..id, 0, 1)
+    CreateClientConVar("shaderdamage_ef_"..id, "1", true, false, "Shader Damage Effect Enable - "..id, 0, 1)
 
     if v.options then
+        if not v.compoptions then
+            v.compoptions = {}
+        end
+
         for opid, op in pairs(v.options) do
-            v.options[opid] = CreateClientConVar("shaderdamage_ef_"..id.."_"..opid, op[1], true, false, "Shader Damage Effect Option - "..id, op[2], op[3])
+            v.compoptions[opid] = CreateClientConVar("shaderdamage_ef_"..id.."_"..opid, op[1], true, false, "Shader Damage Effect Option - "..id, op[2], op[3])
         end
     end
 end
